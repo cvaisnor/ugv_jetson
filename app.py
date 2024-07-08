@@ -8,17 +8,14 @@ def set_default_sink(device_name):
     try:
         command = ['pacmd', 'set-default-sink', device_name]
         subprocess.run(command, check=True)
-        print(f"Default sink set to '{device_name}' successfully.")
     except subprocess.CalledProcessError as e:
-        print(f"Error: {e}")
+        print(f"Default Sink Error: {e}")
 
 device_name = "alsa_output.usb-Solid_State_System_Co._Ltd._USB_PnP_Audio_Device_000000000000-00.analog-stereo"
 set_default_sink(device_name)
 
 # JETSON ORIN NANO
-base = BaseController('/dev/ttyTHS0', 115200)
-# JETSON ORIN NX
-# base = BaseController('/dev/ttyTHS1', 115200)
+base = BaseController('/dev/ttyTHS1', 115200)
 
 threading.Thread(target=lambda: base.breath_light(20), daemon=True).start()
 
@@ -43,7 +40,6 @@ import json
 import uuid
 import asyncio
 import time
-import logging
 import logging
 import cv_ctrl
 import audio_ctrl
@@ -142,11 +138,6 @@ def generate_frames():
         except Exception as e:
             print("An [generate_frames] error occurred:", e)
 
-
-
-
-
-
 # Route to render the HTML template
 @app.route('/')
 def index():
@@ -201,9 +192,6 @@ def delete_video():
     except Exception as e:
         print(e)
         return jsonify(success=False)
-
-
-
 
 # Video WebRTC
 # Function to manage connections
@@ -468,10 +456,6 @@ def play_audio():
 def audio_stop():
     audio_ctrl.stop()
     return jsonify({'success': 'Audio stop'})
-
-
-
-
 
 
 # Web socket
