@@ -2,17 +2,6 @@
 from base_ctrl import BaseController
 import threading
 import yaml, os
-import subprocess
-
-def set_default_sink(device_name):
-    try:
-        command = ['pacmd', 'set-default-sink', device_name]
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Default Sink Error: {e}")
-
-device_name = "alsa_output.usb-Solid_State_System_Co._Ltd._USB_PnP_Audio_Device_000000000000-00.analog-stereo"
-set_default_sink(device_name)
 
 # JETSON ORIN NANO
 base = BaseController('/dev/ttyTHS1', 115200)
@@ -29,7 +18,6 @@ base.base_oled(0, f["base_config"]["robot_name"])
 base.base_oled(1, f"sbc_version: {f['base_config']['sbc_version']}")
 base.base_oled(2, f"{f['base_config']['main_type']}{f['base_config']['module_type']}")
 base.base_oled(3, "Starting...")
-
 
 # Import necessary modules
 from flask import Flask, render_template, Response, request, jsonify, redirect, url_for, send_from_directory, send_file
@@ -75,20 +63,6 @@ cmd_actions = {
     f['code']['pic_cap']: cvf.picture_capture,
     f['code']['vid_sta']: lambda: cvf.video_record(True),
     f['code']['vid_end']: lambda: cvf.video_record(False),
-
-    f['code']['cv_none']: lambda: cvf.set_cv_mode(f['code']['cv_none']),
-    f['code']['cv_moti']: lambda: cvf.set_cv_mode(f['code']['cv_moti']),
-    f['code']['cv_face']: lambda: cvf.set_cv_mode(f['code']['cv_face']),
-    f['code']['cv_objs']: lambda: cvf.set_cv_mode(f['code']['cv_objs']),
-    f['code']['cv_clor']: lambda: cvf.set_cv_mode(f['code']['cv_clor']),
-    f['code']['mp_hand']: lambda: cvf.set_cv_mode(f['code']['mp_hand']),
-    f['code']['cv_auto']: lambda: cvf.set_cv_mode(f['code']['cv_auto']),
-    f['code']['mp_face']: lambda: cvf.set_cv_mode(f['code']['mp_face']),
-    f['code']['mp_pose']: lambda: cvf.set_cv_mode(f['code']['mp_pose']),
-
-    f['code']['re_none']: lambda: cvf.set_detection_reaction(f['code']['re_none']),
-    f['code']['re_capt']: lambda: cvf.set_detection_reaction(f['code']['re_capt']),
-    f['code']['re_reco']: lambda: cvf.set_detection_reaction(f['code']['re_reco']),
 
     f['code']['mc_lock']: lambda: cvf.set_movtion_lock(True),
     f['code']['mc_unlo']: lambda: cvf.set_movtion_lock(False),
@@ -603,10 +577,6 @@ if __name__ == "__main__":
     # lights off
     base.lights_ctrl(0, 0)
     cmd_on_boot()
-
-    # Update to initialize OAK-D-Lite
-    print("Initializing OAK-D-Lite camera...")
-    cvf.oak_device.startPipeline()
 
     # run the main web app
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
