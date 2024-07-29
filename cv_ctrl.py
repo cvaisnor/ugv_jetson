@@ -1,11 +1,8 @@
 import cv2
-import imutils
-import mediapipe as mp
 import imageio
 import threading
 import datetime, time
 import numpy as np
-import math
 import yaml, os, json, subprocess
 from collections import deque
 import textwrap
@@ -16,7 +13,6 @@ curpath = os.path.realpath(__file__)
 thisPath = os.path.dirname(curpath)
 with open(thisPath + '/config.yaml', 'r') as yaml_file:
     f = yaml.safe_load(yaml_file)
-
 
 class OpencvFuncs():
     def __init__(self, project_path, base_ctrl):
@@ -247,7 +243,6 @@ class OpencvFuncs():
             print("USB Camera not connected")
             return False
 
-
     def osd_render(self, osd_frame):
         if not self.add_osd:
             return osd_frame
@@ -270,8 +265,6 @@ class OpencvFuncs():
                         (100, 50 + sensor_index * 20), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
             sensor_index = sensor_index + 1
-
-
         return osd_frame
 
     def picture_capture(self):
