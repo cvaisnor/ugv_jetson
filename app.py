@@ -604,5 +604,9 @@ if __name__ == "__main__":
     base.lights_ctrl(0, 0)
     cmd_on_boot()
 
+    # Update to initialize OAK-D-Lite
+    print("Initializing OAK-D-Lite camera...")
+    cvf.oak_device.startPipeline()
+
     # run the main web app
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

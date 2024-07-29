@@ -9,6 +9,7 @@ import math
 import yaml, os, json, subprocess
 from collections import deque
 import textwrap
+import depthai as dai
 
 # config file.
 curpath = os.path.realpath(__file__)
@@ -146,122 +147,193 @@ class OpencvFuncs():
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, f['video']['default_res_w'])
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, f['video']['default_res_h'])
 
+        self.oak_pipeline = self.create_oak_pipeline()
+        self.oak_device = dai.Device(self.oak_pipeline)
+        self.oak_queue = self.oak_device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
+    def create_oak_pipeline(self):
+        pipeline = dai.Pipeline()
+
+        monoLeft = pipeline.create(dai.node.MonoCamera)
+        monoRight = pipeline.create(dai.node.MonoCamera)
+        depth = pipeline.create(dai.node.StereoDepth)
+        colormap = pipeline.create(dai.node.ImageManip)
+        xout = pipeline.create(dai.node.XLinkOut)
+
+        xout.setStreamName("disparity")
+
+        monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        monoLeft.setCamera("left")
+        monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        monoRight.setCamera("right")
+
+        depth.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+        depth.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
+        depth.setLeftRightCheck(True)
+        depth.setExtendedDisparity(False)
+        depth.setSubpixel(False)
+
+        colormap.initialConfig.setColormap(dai.Colormap.STEREO_TURBO, depth.initialConfig.getMaxDisparity())
+        colormap.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
+
+        monoLeft.out.link(depth.left)
+        monoRight.out.link(depth.right)
+        depth.disparity.link(colormap.inputImage)
+        colormap.out.link(xout.input)
+
+        return pipeline
 
     def frame_process(self):
         try:
-            success, input_frame = self.camera.read()
-            if not success:
-                self.camera.release()
-                time.sleep(1)
-                self.camera = cv2.VideoCapture(0)
+            in_disparity = self.oak_queue.get()
+            frame = in_disparity.getCvFrame()
+            
+            # Apply any additional processing if needed
+            # For example, resize the frame if necessary
+            frame = cv2.resize(frame, (640, 480))
+
+            # Add OSD if enabled
+            if self.add_osd:
+                frame = self.osd_render(frame)
+
+            # Capture frame if flag is set
+            if self.picture_capture_flag:
+                self.capture_picture(frame)
+
+            # Record video if flag is set
+            if self.set_video_record_flag and self.video_record_status_flag:
+                self.record_video(frame)
+
+            # Encode frame
+            ret, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
+            frame = buffer.tobytes()
+
+            # Update FPS
+            self.update_fps()
+
+            return frame
         except Exception as e:
             print(f"[cv_ctrl.frame_process] error: {e}")
-            input_frame = 255 * np.ones((480, 640, 3), dtype=np.uint8)
-            cv2.putText(input_frame, f"camera read failed... \n{e}", 
-                        (round(0.05*640), round(0.1*640 + 5 * 13)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.369, (0, 0, 0), 1)
-            ret, buffer = cv2.imencode('.jpg', input_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
-            input_frame = buffer.tobytes()
-            return input_frame
+            # Return a blank frame or error message frame
+            error_frame = 255 * np.ones((480, 640, 3), dtype=np.uint8)
+            cv2.putText(error_frame, f"Camera read failed... {e}", 
+                        (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            ret, buffer = cv2.imencode('.jpg', error_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
+            return buffer.tobytes()
 
-        # opencv funcs
-        if self.cv_mode != f['code']['cv_none']:
-            if not self.cv_event.is_set():
-                self.cv_event.set()
-                self.opencv_threading(input_frame)
-            try:
-                mask = self.overlay.astype(bool)
-                input_frame[mask] = self.overlay[mask]
-                cv2.addWeighted(self.overlay, 1, input_frame, 1, 0, input_frame)
-            except Exception as e:
-                    print("An error occurred:", e)
-        elif self.show_info_flag:
-            if time.time() - self.info_update_time > self.info_show_time:
-                self.show_info_flag = False
-            try:
-                self.overlay = input_frame.copy()
-                cv2.rectangle(self.overlay,  (round((self.info_scale-0.005)*640), round((0.33)*480)), 
-                                        (round(0.98*640), round((0.78)*480)), 
-                                        self.info_bg_color, -1)
-                cv2.addWeighted(self.overlay, 0.5, input_frame, 0.5, 0, input_frame)
-            except Exception as e:
-                print(f"[cv_ctrl.frame_process] error: {e}")
+    # def frame_process(self):
+    #     try:
+    #         success, input_frame = self.camera.read()
+    #         if not success:
+    #             self.camera.release()
+    #             time.sleep(1)
+    #             self.camera = cv2.VideoCapture(0)
+    #     except Exception as e:
+    #         print(f"[cv_ctrl.frame_process] error: {e}")
+    #         input_frame = 255 * np.ones((480, 640, 3), dtype=np.uint8)
+    #         cv2.putText(input_frame, f"camera read failed... \n{e}", 
+    #                     (round(0.05*640), round(0.1*640 + 5 * 13)), 
+    #                     cv2.FONT_HERSHEY_SIMPLEX, 0.369, (0, 0, 0), 1)
+    #         ret, buffer = cv2.imencode('.jpg', input_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
+    #         input_frame = buffer.tobytes()
+    #         return input_frame
 
-            # info_deque.appendleft(time.time())
-            for i in range(0, len(self.info_deque)):
-                cv2.putText(input_frame, str(self.info_deque[i]['text']), 
-                            (round(self.info_scale*640), round(self.info_scale*640 - i * 20)), 
-                            cv2.FONT_HERSHEY_SIMPLEX, self.info_deque[i]['size'], self.info_deque[i]['color'], 1)
+    #     # opencv funcs
+    #     if self.cv_mode != f['code']['cv_none']:
+    #         if not self.cv_event.is_set():
+    #             self.cv_event.set()
+    #             self.opencv_threading(input_frame)
+    #         try:
+    #             mask = self.overlay.astype(bool)
+    #             input_frame[mask] = self.overlay[mask]
+    #             cv2.addWeighted(self.overlay, 1, input_frame, 1, 0, input_frame)
+    #         except Exception as e:
+    #                 print("An error occurred:", e)
+    #     elif self.show_info_flag:
+    #         if time.time() - self.info_update_time > self.info_show_time:
+    #             self.show_info_flag = False
+    #         try:
+    #             self.overlay = input_frame.copy()
+    #             cv2.rectangle(self.overlay,  (round((self.info_scale-0.005)*640), round((0.33)*480)), 
+    #                                     (round(0.98*640), round((0.78)*480)), 
+    #                                     self.info_bg_color, -1)
+    #             cv2.addWeighted(self.overlay, 0.5, input_frame, 0.5, 0, input_frame)
+    #         except Exception as e:
+    #             print(f"[cv_ctrl.frame_process] error: {e}")
 
-        if self.show_base_info_flag:
-            for i in range(0, len(self.recv_deque)):
-                cv2.putText(input_frame, str(self.recv_deque[i]), 
-                        (round(0.05*640), round(0.1*640 + i * 13)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.369, (255, 255, 255), 1)
+    #         # info_deque.appendleft(time.time())
+    #         for i in range(0, len(self.info_deque)):
+    #             cv2.putText(input_frame, str(self.info_deque[i]['text']), 
+    #                         (round(self.info_scale*640), round(self.info_scale*640 - i * 20)), 
+    #                         cv2.FONT_HERSHEY_SIMPLEX, self.info_deque[i]['size'], self.info_deque[i]['color'], 1)
 
-        # render osd
-        input_frame = self.osd_render(input_frame)
+    #     if self.show_base_info_flag:
+    #         for i in range(0, len(self.recv_deque)):
+    #             cv2.putText(input_frame, str(self.recv_deque[i]), 
+    #                     (round(0.05*640), round(0.1*640 + i * 13)), 
+    #                     cv2.FONT_HERSHEY_SIMPLEX, 0.369, (255, 255, 255), 1)
 
-        # capture frame
-        if self.picture_capture_flag:
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            photo_filename = f'{self.photo_path}photo_{current_time}.jpg'
-            try:
-                cv2.imwrite(photo_filename, input_frame)
-                self.picture_capture_flag = False
-                print(photo_filename)
-            except:
-                pass
+    #     # render osd
+    #     input_frame = self.osd_render(input_frame)
 
-        # record video
-        if not self.set_video_record_flag and not self.video_record_status_flag:
-            pass
-        elif self.set_video_record_flag and not self.video_record_status_flag:
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            video_filename = f'{self.video_path}video_{current_time}.mp4'
-            self.writer = imageio.get_writer(video_filename, fps=30, codec='libx264')
-            self.video_record_status_flag = True
-        elif self.set_video_record_flag and self.video_record_status_flag:
-            cv2.circle(input_frame, (15, 15), 5, (64, 64, 255), -1)
-            rgb_frame = cv2.cvtColor(input_frame, cv2.COLOR_BGRA2RGB)
-            rgb_frame_3d = np.expand_dims(rgb_frame, axis=0)
-            self.writer.append_data(rgb_frame_3d)
-            # self.writer.append_data(np.array(cv2.cvtColor(input_frame, cv2.COLOR_BGRA2RGB)))
-        elif not self.set_video_record_flag and self.video_record_status_flag:
-            self.video_record_status_flag = False
-            self.writer.close()
+    #     # capture frame
+    #     if self.picture_capture_flag:
+    #         current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    #         photo_filename = f'{self.photo_path}photo_{current_time}.jpg'
+    #         try:
+    #             cv2.imwrite(photo_filename, input_frame)
+    #             self.picture_capture_flag = False
+    #             print(photo_filename)
+    #         except:
+    #             pass
 
-        # frame scale
-        if self.scale_rate == 1:
-            pass
-        else:
-            img_height, img_width = input_frame.shape[:2]
-            img_width_d2  = img_width/2
-            img_height_d2 = img_height/2
-            x_start = int(img_width_d2 - (img_width_d2//self.scale_rate))
-            x_end   = int(img_width_d2 + (img_width_d2//self.scale_rate))
-            y_start = int(img_height_d2 - (img_height_d2//self.scale_rate))
-            y_end   = int(img_height_d2 + (img_height_d2//self.scale_rate))
-            input_frame = input_frame[y_start:y_end, x_start:x_end]
+    #     # record video
+    #     if not self.set_video_record_flag and not self.video_record_status_flag:
+    #         pass
+    #     elif self.set_video_record_flag and not self.video_record_status_flag:
+    #         current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    #         video_filename = f'{self.video_path}video_{current_time}.mp4'
+    #         self.writer = imageio.get_writer(video_filename, fps=30, codec='libx264')
+    #         self.video_record_status_flag = True
+    #     elif self.set_video_record_flag and self.video_record_status_flag:
+    #         cv2.circle(input_frame, (15, 15), 5, (64, 64, 255), -1)
+    #         rgb_frame = cv2.cvtColor(input_frame, cv2.COLOR_BGRA2RGB)
+    #         rgb_frame_3d = np.expand_dims(rgb_frame, axis=0)
+    #         self.writer.append_data(rgb_frame_3d)
+    #         # self.writer.append_data(np.array(cv2.cvtColor(input_frame, cv2.COLOR_BGRA2RGB)))
+    #     elif not self.set_video_record_flag and self.video_record_status_flag:
+    #         self.video_record_status_flag = False
+    #         self.writer.close()
 
-        # encode frame
-        try:
-            ret, buffer = cv2.imencode('.jpg', input_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
-            input_frame = buffer.tobytes()
-        except:
-            pass
+    #     # frame scale
+    #     if self.scale_rate == 1:
+    #         pass
+    #     else:
+    #         img_height, img_width = input_frame.shape[:2]
+    #         img_width_d2  = img_width/2
+    #         img_height_d2 = img_height/2
+    #         x_start = int(img_width_d2 - (img_width_d2//self.scale_rate))
+    #         x_end   = int(img_width_d2 + (img_width_d2//self.scale_rate))
+    #         y_start = int(img_height_d2 - (img_height_d2//self.scale_rate))
+    #         y_end   = int(img_height_d2 + (img_height_d2//self.scale_rate))
+    #         input_frame = input_frame[y_start:y_end, x_start:x_end]
 
-        # get fps
-        self.fps_count += 1
-        if time.time() - self.fps_start_time >= 2:
-            self.video_fps = self.fps_count/2
-            self.fps_count = 0
-            self.fps_start_time = time.time()
+    #     # encode frame
+    #     try:
+    #         ret, buffer = cv2.imencode('.jpg', input_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
+    #         input_frame = buffer.tobytes()
+    #     except:
+    #         pass
 
-        # output frame
-        return input_frame
+    #     # get fps
+    #     self.fps_count += 1
+    #     if time.time() - self.fps_start_time >= 2:
+    #         self.video_fps = self.fps_count/2
+    #         self.fps_count = 0
+    #         self.fps_start_time = time.time()
 
+    #     # output frame
+    #     return input_frame
 
 
     def usb_camera_detection(self):
@@ -607,21 +679,7 @@ class OpencvFuncs():
         imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         results = self.hands.process(imgRGB)
 
-        overlay_buffer = np.zeros_like(imgRGB)
-        get_pwm = 0
-
-        if results.multi_hand_landmarks:
-            for handLms in results.multi_hand_landmarks:
-                # draw joints
-                for id, lm in enumerate(handLms.landmark):
-                    h, w, c = imgRGB.shape
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    cv2.circle(overlay_buffer, (cx, cy), 5, (255, 0, 0), -1)
-
-                # draw lines
-                self.mpDraw.draw_landmarks(overlay_buffer, handLms, self.mpHands.HAND_CONNECTIONS)
-
-                target_pos = handLms.landmark[self.mpHands.HandLandmark.INDEX_FINGER_TIP]
+        overlay_buffer = np.zeros_like(imgRGB) That I have installed on the rover. self.mpHands.HandLandmark.INDEX_FINGER_TIP]
                 # print(f"x:{target_pos.x} y:{target_pos.y}")
                 if not self.cv_movtion_lock:
                     distance = self.gimbal_track(center_x, center_y, width*target_pos.x, height*target_pos.y, self.track_faces_iterate)
