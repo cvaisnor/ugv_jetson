@@ -593,11 +593,6 @@ socket.emit('request_data');
 var light_mode = 0;
 var cv_heartbeat_stop_flag = false;
 socket.on('update', function(data) {
-    if (data[base_voltage] != 0) {
-        // console.log(data[detect_react]);
-    } else {
-        return;
-    }
     try {
         var baseBtn = document.getElementById("base_led_ctrl_btn");
         var BButtons = baseBtn.getElementsByTagName("button");
@@ -707,13 +702,13 @@ socket.on('update', function(data) {
         
         var element = document.getElementById("b_state");
         element.classList.remove("baterry_state", "baterry_state1", "baterry_state2", "baterry_state3");
-        if (data[base_voltage] >= 10.5) {
+        if (data[base_voltage] >= 12.4) {
             element.classList.add("baterry_state");
-        } else if (data[base_voltage] >= 10) {
+        } else if (data[base_voltage] >= 11.9) {
             element.classList.add("baterry_state","baterry_state3");
-        } else if (data[base_voltage] >= 9.5) {
+        } else if (data[base_voltage] >= 11.5) {
             element.classList.add("baterry_state","baterry_state2");
-        } else if (data[base_voltage] < 9.5) {
+        } else if (data[base_voltage] < 11.2) {
             element.classList.add("baterry_state","baterry_state1");
         }
     } catch(e) {

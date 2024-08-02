@@ -2,17 +2,6 @@
 from base_ctrl import BaseController
 import threading
 import yaml, os
-import subprocess
-
-def set_default_sink(device_name):
-    try:
-        command = ['pacmd', 'set-default-sink', device_name]
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Default Sink Error: {e}")
-
-device_name = "alsa_output.usb-Solid_State_System_Co._Ltd._USB_PnP_Audio_Device_000000000000-00.analog-stereo"
-set_default_sink(device_name)
 
 # JETSON ORIN NANO
 base = BaseController('/dev/ttyTHS1', 115200)
@@ -30,7 +19,6 @@ base.base_oled(1, f"sbc_version: {f['base_config']['sbc_version']}")
 base.base_oled(2, f"{f['base_config']['main_type']}{f['base_config']['module_type']}")
 base.base_oled(3, "Starting...")
 
-
 # Import necessary modules
 from flask import Flask, render_template, Response, request, jsonify, redirect, url_for, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
@@ -42,12 +30,11 @@ import asyncio
 import time
 import logging
 import cv_ctrl
-import audio_ctrl
 import os_info
 
 # Get system info
 UPLOAD_FOLDER = thisPath + '/sounds/others'
-si = os_info.SystemInfo()
+system_info = os_info.SystemInfo()
 
 # Create a Flask app instance
 app = Flask(__name__)
@@ -75,20 +62,6 @@ cmd_actions = {
     f['code']['pic_cap']: cvf.picture_capture,
     f['code']['vid_sta']: lambda: cvf.video_record(True),
     f['code']['vid_end']: lambda: cvf.video_record(False),
-
-    f['code']['cv_none']: lambda: cvf.set_cv_mode(f['code']['cv_none']),
-    f['code']['cv_moti']: lambda: cvf.set_cv_mode(f['code']['cv_moti']),
-    f['code']['cv_face']: lambda: cvf.set_cv_mode(f['code']['cv_face']),
-    f['code']['cv_objs']: lambda: cvf.set_cv_mode(f['code']['cv_objs']),
-    f['code']['cv_clor']: lambda: cvf.set_cv_mode(f['code']['cv_clor']),
-    f['code']['mp_hand']: lambda: cvf.set_cv_mode(f['code']['mp_hand']),
-    f['code']['cv_auto']: lambda: cvf.set_cv_mode(f['code']['cv_auto']),
-    f['code']['mp_face']: lambda: cvf.set_cv_mode(f['code']['mp_face']),
-    f['code']['mp_pose']: lambda: cvf.set_cv_mode(f['code']['mp_pose']),
-
-    f['code']['re_none']: lambda: cvf.set_detection_reaction(f['code']['re_none']),
-    f['code']['re_capt']: lambda: cvf.set_detection_reaction(f['code']['re_capt']),
-    f['code']['re_reco']: lambda: cvf.set_detection_reaction(f['code']['re_reco']),
 
     f['code']['mc_lock']: lambda: cvf.set_movtion_lock(True),
     f['code']['mc_unlo']: lambda: cvf.set_movtion_lock(False),
@@ -141,7 +114,6 @@ def generate_frames():
 # Route to render the HTML template
 @app.route('/')
 def index():
-    audio_ctrl.play_random_audio("connected", False)
     return render_template('index.html')
 
 @app.route('/config')
@@ -267,14 +239,6 @@ def cmdline_ctrl(args_string):
                 cvf.show_recv_info(True)
             else:
                 cvf.show_recv_info(False)
-
-    elif args[0] == 'audio':
-        if args[1] == '-s' or args[1] == '--say':
-            audio_ctrl.play_speech_thread(' '.join(args[2:]))
-        elif args[1] == '-v' or args[1] == '--volume':
-            audio_ctrl.set_audio_volume(args[2])
-        elif args[1] == '-p' or args[1] == '--play_file':
-            audio_ctrl.play_file(args[2])
 
     elif args[0] == 'send':
         if args[1] == '-a' or args[1] == '--add':
@@ -403,10 +367,6 @@ def cmdline_ctrl(args_string):
             yaml.dump(f, yaml_file)
         set_version(main_type, module_type)
 
-    elif args[0] == 'test':
-        cvf.update_base_data({"T":1003,"mac":1111,"megs":"helllo aaaaaaaa"})
-
-
 # Route to handle the offer request
 @app.route('/offer', methods=['POST'])
 def offer_route():
@@ -428,35 +388,6 @@ def handle_command():
         print(f"[app.handle_command] error: {e}")
     return jsonify({"status": "success", "message": "Command received"})
 
-@app.route('/getAudioFiles', methods=['GET'])
-def get_audio_files():
-    files = [f for f in os.listdir(UPLOAD_FOLDER) if os.path.isfile(os.path.join(UPLOAD_FOLDER, f)) and (f.endswith('.mp3') or f.endswith('.wav'))]
-    return jsonify(files)
-
-@app.route('/uploadAudio', methods=['POST'])
-def upload_audio():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'})
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'})
-    if file:
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(UPLOAD_FOLDER, filename))
-        return jsonify({'success': 'File uploaded successfully'})
-
-@app.route('/playAudio', methods=['POST'])
-def play_audio():
-    audio_file = request.form['audio_file']
-    print(thisPath + '/sounds/others/' + audio_file)
-    audio_ctrl.play_audio_thread(thisPath + '/sounds/others/' + audio_file)
-    return jsonify({'success': 'Audio is playing'})
-
-@app.route('/stop_audio', methods=['POST'])
-def audio_stop():
-    audio_ctrl.stop()
-    return jsonify({'success': 'Audio stop'})
-
 
 # Web socket
 @socketio.on('json', namespace='/json')
@@ -472,12 +403,12 @@ def update_data_websocket_single():
     # {'T':1001,'L':0,'R':0,'r':0,'p':0,'v': 11,'pan':0,'tilt':0}
     try:
         socket_data = {
-            f['fb']['picture_size']:si.pictures_size,
-            f['fb']['video_size']:  si.videos_size,
-            f['fb']['cpu_load']:    si.cpu_load,
-            f['fb']['cpu_temp']:    si.cpu_temp,
-            f['fb']['ram_usage']:   si.ram,
-            f['fb']['wifi_rssi']:   si.wifi_rssi,
+            f['fb']['picture_size']:system_info.pictures_size,
+            f['fb']['video_size']:  system_info.videos_size,
+            f['fb']['cpu_load']:    system_info.cpu_load,
+            f['fb']['cpu_temp']:    system_info.cpu_temp,
+            f['fb']['ram_usage']:   system_info.ram,
+            f['fb']['wifi_rssi']:   system_info.wifi_rssi,
 
             f['fb']['led_mode']:    cvf.cv_light_mode,
             f['fb']['detect_type']: cvf.cv_mode,
@@ -500,8 +431,8 @@ def update_data_loop():
     time.sleep(1)
     while 1:
         update_data_websocket_single()
-        eth0 = si.eth0_ip
-        wlan = si.wlan_ip
+        eth0 = system_info.eth0_ip
+        wlan = system_info.wlan_ip
         if eth0:
             base.base_oled(0, f"E:{eth0}")
         else:
@@ -509,12 +440,12 @@ def update_data_loop():
         if wlan:
             base.base_oled(1, f"W:{wlan}")
         else:
-            base.base_oled(1, f"W: NO {si.net_interface}")
+            base.base_oled(1, f"W: NO {system_info.net_interface}")
         elapsed_time = time.time() - start_time
         hours = int(elapsed_time // 3600)
         minutes = int((elapsed_time % 3600) // 60)
         seconds = int(elapsed_time % 60)
-        base.base_oled(3, f"{si.wifi_mode} {hours:02d}:{minutes:02d}:{seconds:02d} {si.wifi_rssi}dBm")
+        base.base_oled(3, f"{system_info.wifi_mode} {hours:02d}:{minutes:02d}:{seconds:02d} {system_info.wifi_rssi}dBm")
         time.sleep(5)
 
 def base_data_loop():
@@ -577,12 +508,9 @@ if __name__ == "__main__":
     
     # lights off
     base.lights_ctrl(255, 255)
-    
-    # play a audio file in /sounds/robot_started/
-    audio_ctrl.play_random_audio("robot_started", False)
 
     # update the size of videos and pictures
-    si.update_folder(thisPath)
+    system_info.update_folder(thisPath)
 
     # pt/arm looks forward
     if f['base_config']['module_type'] == 1:
@@ -591,8 +519,8 @@ if __name__ == "__main__":
         base.gimbal_ctrl(0, 0, 200, 10)
 
     # feedback loop starts
-    si.start()
-    si.resume()
+    system_info.start()
+    system_info.resume()
     data_update_thread = threading.Thread(target=update_data_loop, daemon=True)
     data_update_thread.start()
 
