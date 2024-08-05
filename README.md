@@ -5,22 +5,16 @@
 # Waveshare UGV Robot
 ![](./media/ugv.jpeg)
 
-## Basic Description
-This Waveshare UGV robot utilizes both an upper computer and a lower computer. This repository contains the program running on the upper computer, which is a NVIDIA Jetson Orin Nano 8GB.
+## Custom Battery Configuration:
+- 2x 3s LiPo batteries in parallel
+    - OVONIC Lipo Battery 5200mAh 50C 11.1V 3S RC Battery with Deans and XT60
+- Single battery dimensions (mm): 132 x 25 x 42
+![](./media/battery.jpeg)
 
-The program running on the lower computer is either named [ugv_base_ros](https://github.com/effectsmachine/ugv_base_ros.git) or [ugv_base_general](https://github.com/effectsmachine/ugv_base_general.git) depending on the type of robot driver being used.  
+## Description
+This repository contains the program running on the upper computer, which is a NVIDIA Jetson Orin Nano 8GB.
 
 The upper computer communicates with the lower computer (the robot's driver based on ESP32) by sending JSON commands via GPIO UART. The host controller handles AI vision and strategy planning, while the sub-controller, utilizing an ESP32, manages motion control and sensor data processing. This setup ensures efficient collaboration and enhanced performance.
-
-After powering on the robot, Jetson will automatically establish a hotspot, and the OLED screen will display a series of system initialization messages:  
-
-![](./media/RaspRover-LED-screen.png)
-- The first line `E` displays the IP address of the Ethernet port, which allows remote access to the Raspberry Pi. If it shows No Ethernet, it indicates that the Raspberry Pi is not connected to an Ethernet cable.
-- The second line `W` indicates the robot's wireless mode.
-- The third line `F/J` specifies the Ethernet port numbers. Port `5000` provides access to the robot control Web UI, while port `8888` grants access to the JupyterLab interface.
-- The fourth line `STA` indicates that the WiFi is in Station (STA) mode. The time value represents the duration of robot usage. The dBm value indicates the signal strength RSSI in STA mode.  
-
-You can access the robot web app using a mobile phone or PC. Simply open your browser and enter `[IP]:5000` (for example, `192.168.10.50:5000`) in the URL bar to control the robot.  
 
 ## Install
 
