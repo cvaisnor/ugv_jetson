@@ -74,164 +74,124 @@ class OpencvFuncs():
         # camera type detection
         self.usb_camera_connected = True
 
-        # FPS calculation
-        self.fps_start_time = time.time()
-        self.fps_count = 0
-        self.video_fps = 0
-
-        # OSD settings
-        self.add_osd = f['base_config']['add_osd']
-
-        # OAK-D-Lite initialization
-        self.oak_pipeline = self.create_oak_pipeline()
-        self.oak_device = dai.Device(self.oak_pipeline)
-        self.oak_rgb_queue = self.oak_device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-        self.oak_depth_queue = self.oak_device.getOutputQueue(name="depth", maxSize=4, blocking=False)
-
-        # Add these lines for depth processing
-        self.min_depth = 100  # minimum depth in millimeters
-        self.max_depth = 10000  # maximum depth in millimeters
-
-    def create_oak_pipeline(self):
-        pipeline = dai.Pipeline()
-
-        # RGB camera
-        cam_rgb = pipeline.create(dai.node.ColorCamera)
-        cam_rgb.setPreviewSize(640, 480)
-        cam_rgb.setInterleaved(False)
-        cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-
-        # Mono cameras for depth
-        mono_left = pipeline.create(dai.node.MonoCamera)
-        mono_right = pipeline.create(dai.node.MonoCamera)
-        mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-        mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-        mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-        mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-
-        # Stereo Depth
-        stereo = pipeline.create(dai.node.StereoDepth)
-        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-        stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
-        stereo.setOutputSize(640, 480)
-
-        # Linking
-        mono_left.out.link(stereo.left)
-        mono_right.out.link(stereo.right)
-
-        # Create outputs
-        xout_rgb = pipeline.create(dai.node.XLinkOut)
-        xout_depth = pipeline.create(dai.node.XLinkOut)
-        xout_rgb.setStreamName("rgb")
-        xout_depth.setStreamName("depth")
-
-        cam_rgb.preview.link(xout_rgb.input)
-        stereo.depth.link(xout_depth.input)
-
-        return pipeline
-
-    def create_depth_colormap(self):
-        # Create a gradual colormap from red (close) to blue (far)
-        colormap = np.zeros((256, 1, 3), dtype=np.uint8)
-        for i in range(256):
-            if i < 128:
-                # Red to yellow
-                colormap[i] = [0, int(i*2), 255]
-            else:
-                # Yellow to blue
-                colormap[i] = [int((i-128)*2), 255, max(255 - int((i-128)*2), 0)]
-        return colormap
+        # usb camera init
+        self.camera = cv2.VideoCapture(-1)
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, f['video']['default_res_w'])
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, f['video']['default_res_h'])
 
     def frame_process(self):
         try:
-            # Get RGB frame
-            in_rgb = self.oak_rgb_queue.get()
-            rgb_frame = in_rgb.getCvFrame()
-
-            # Get depth frame
-            in_depth = self.oak_depth_queue.get()
-            depth_frame = in_depth.getFrame()
-
-            # Clip depth values to our desired range
-            depth_frame = np.clip(depth_frame, self.min_depth, self.max_depth)
-
-            # Normalize the depth to 0-255 range
-            depth_norm = ((depth_frame - self.min_depth) / (self.max_depth - self.min_depth) * 255).astype(np.uint8)
-
-            # Apply gaussian blur to smooth the depth map
-            depth_norm = cv2.GaussianBlur(depth_norm, (5, 5), 0)
-
-            # Create a custom colormap
-            colormap = self.create_depth_colormap()
-
-            # Apply the colormap to the depth image
-            depth_colormap = cv2.applyColorMap(depth_norm, colormap)
-
-            # Ensure both frames are the same size
-            depth_colormap = cv2.resize(depth_colormap, (rgb_frame.shape[1], rgb_frame.shape[0]))
-
-            # Create a mask for areas with valid depth data
-            mask = (depth_frame > self.min_depth) & (depth_frame < self.max_depth)
-
-            # Create the blended frame
-            blended_frame = rgb_frame.copy()
-            blended_frame[mask] = cv2.addWeighted(rgb_frame[mask], 0.7, depth_colormap[mask], 0.3, 0)
-
-            # Add OSD if enabled
-            if self.add_osd:
-                blended_frame = self.osd_render(blended_frame)
-
-            # Capture frame if flag is set
-            if self.picture_capture_flag:
-                self.capture_picture(blended_frame)
-
-            # Record video if flag is set
-            if self.set_video_record_flag and self.video_record_status_flag:
-                self.record_video(blended_frame)
-
-            # Encode frame
-            ret, buffer = cv2.imencode('.jpg', blended_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
-            frame = buffer.tobytes()
-
-            # Update FPS
-            self.update_fps()
-
-            return frame
+            success, input_frame = self.camera.read()
+            if not success:
+                self.camera.release()
+                time.sleep(1)
+                self.camera = cv2.VideoCapture(0)
         except Exception as e:
             print(f"[cv_ctrl.frame_process] error: {e}")
-            # Return a blank frame or error message frame
-            error_frame = 255 * np.ones((480, 640, 3), dtype=np.uint8)
-            cv2.putText(error_frame, f"Camera read failed... {e}", 
-                        (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            ret, buffer = cv2.imencode('.jpg', error_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
-            return buffer.tobytes()
-        
+            input_frame = 255 * np.ones((480, 640, 3), dtype=np.uint8)
+            cv2.putText(input_frame, f"camera read failed... \n{e}", 
+                        (round(0.05*640), round(0.1*640 + 5 * 13)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.369, (0, 0, 0), 1)
+            ret, buffer = cv2.imencode('.jpg', input_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
+            input_frame = buffer.tobytes()
+            return input_frame
 
-    def update_fps(self):
-        self.fps_count += 1
-        if time.time() - self.fps_start_time >= 2:
-            self.video_fps = self.fps_count / 2
-            self.fps_count = 0
-            self.fps_start_time = time.time()
-    
-    def record_video(self, frame):
-        if self.writer is None:
+        # opencv funcs
+        if self.cv_mode != f['code']['cv_none']:
+            if not self.cv_event.is_set():
+                self.cv_event.set()
+                self.opencv_threading(input_frame)
+            try:
+                mask = self.overlay.astype(bool)
+                input_frame[mask] = self.overlay[mask]
+                cv2.addWeighted(self.overlay, 1, input_frame, 1, 0, input_frame)
+            except Exception as e:
+                    print("An error occurred:", e)
+        elif self.show_info_flag:
+            if time.time() - self.info_update_time > self.info_show_time:
+                self.show_info_flag = False
+            try:
+                self.overlay = input_frame.copy()
+                cv2.rectangle(self.overlay,  (round((self.info_scale-0.005)*640), round((0.33)*480)), 
+                                        (round(0.98*640), round((0.78)*480)), 
+                                        self.info_bg_color, -1)
+                cv2.addWeighted(self.overlay, 0.5, input_frame, 0.5, 0, input_frame)
+            except Exception as e:
+                print(f"[cv_ctrl.frame_process] error: {e}")
+
+            # info_deque.appendleft(time.time())
+            for i in range(0, len(self.info_deque)):
+                cv2.putText(input_frame, str(self.info_deque[i]['text']), 
+                            (round(self.info_scale*640), round(self.info_scale*640 - i * 20)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, self.info_deque[i]['size'], self.info_deque[i]['color'], 1)
+
+        if self.show_base_info_flag:
+            for i in range(0, len(self.recv_deque)):
+                cv2.putText(input_frame, str(self.recv_deque[i]), 
+                        (round(0.05*640), round(0.1*640 + i * 13)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.369, (255, 255, 255), 1)
+
+        # render osd
+        input_frame = self.osd_render(input_frame)
+
+        # capture frame
+        if self.picture_capture_flag:
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            photo_filename = f'{self.photo_path}photo_{current_time}.jpg'
+            try:
+                cv2.imwrite(photo_filename, input_frame)
+                self.picture_capture_flag = False
+                print(photo_filename)
+            except:
+                pass
+
+        # record video
+        if not self.set_video_record_flag and not self.video_record_status_flag:
+            pass
+        elif self.set_video_record_flag and not self.video_record_status_flag:
             current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             video_filename = f'{self.video_path}video_{current_time}.mp4'
             self.writer = imageio.get_writer(video_filename, fps=30, codec='libx264')
-        
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self.writer.append_data(rgb_frame)
-    
-    def capture_picture(self, frame):
-        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        photo_filename = f'{self.photo_path}photo_{current_time}.jpg'
+            self.video_record_status_flag = True
+        elif self.set_video_record_flag and self.video_record_status_flag:
+            cv2.circle(input_frame, (15, 15), 5, (64, 64, 255), -1)
+            rgb_frame = cv2.cvtColor(input_frame, cv2.COLOR_BGRA2RGB)
+            rgb_frame_3d = np.expand_dims(rgb_frame, axis=0)
+            self.writer.append_data(rgb_frame_3d)
+            # self.writer.append_data(np.array(cv2.cvtColor(input_frame, cv2.COLOR_BGRA2RGB)))
+        elif not self.set_video_record_flag and self.video_record_status_flag:
+            self.video_record_status_flag = False
+            self.writer.close()
+
+        # frame scale
+        if self.scale_rate == 1:
+            pass
+        else:
+            img_height, img_width = input_frame.shape[:2]
+            img_width_d2  = img_width/2
+            img_height_d2 = img_height/2
+            x_start = int(img_width_d2 - (img_width_d2//self.scale_rate))
+            x_end   = int(img_width_d2 + (img_width_d2//self.scale_rate))
+            y_start = int(img_height_d2 - (img_height_d2//self.scale_rate))
+            y_end   = int(img_height_d2 + (img_height_d2//self.scale_rate))
+            input_frame = input_frame[y_start:y_end, x_start:x_end]
+
+        # encode frame
         try:
-            cv2.imwrite(photo_filename, frame)
-            self.picture_capture_flag = False
-            print(f"Picture captured: {photo_filename}")
-        except Exception as e:
-            print(f"Failed to capture picture: {e}")
+            ret, buffer = cv2.imencode('.jpg', input_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.video_quality])
+            input_frame = buffer.tobytes()
+        except:
+            pass
+
+        # get fps
+        self.fps_count += 1
+        if time.time() - self.fps_start_time >= 2:
+            self.video_fps = self.fps_count/2
+            self.fps_count = 0
+            self.fps_start_time = time.time()
+
+        # output frame
+        return input_frame
 
 
     def usb_camera_detection(self):
